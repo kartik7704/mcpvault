@@ -256,6 +256,26 @@ export function createServer(vaultPath, options = {}) {
                         },
                         required: ["path", "startLine", "endLine"]
                     }
+                },
+                {
+                    name: "get_ring_nodes",
+                    description: "Return all vault notes tagged 'ring' — the orbit anchors in the 3D graph. Each entry includes the ring-filter tag (which child notes orbit it), radius, and ring-normal vector. Use this to understand the current ring topology before reading individual notes.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+                        }
+                    }
+                },
+                {
+                    name: "get_vault_graph_state",
+                    description: "Return the full 3D graph state in one call: every ring node with its ring-filter, radius, ring-normal, current graph_pos (x/y/z from frontmatter), and the list of child notes that orbit it — each child also includes its graph_pos. Use this to inspect or reason about the current spatial layout of the vault graph without reading individual files.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            prettyPrint: { type: "boolean", description: "Format JSON response with indentation (default: false)", default: false }
+                        }
+                    }
                 }
             ]
         };
@@ -435,6 +455,20 @@ export function createServer(vaultPath, options = {}) {
                     });
                     return {
                         content: [{ type: "text", text }]
+                    };
+                }
+                case "get_ring_nodes": {
+                    const rings = await fileSystem.getRingNodes();
+                    const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+                    return {
+                        content: [{ type: "text", text: JSON.stringify(rings, null, indent) }]
+                    };
+                }
+                case "get_vault_graph_state": {
+                    const state = await fileSystem.getVaultGraphState();
+                    const indent = trimmedArgs.prettyPrint ? 2 : undefined;
+                    return {
+                        content: [{ type: "text", text: JSON.stringify(state, null, indent) }]
                     };
                 }
                 default:

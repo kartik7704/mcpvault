@@ -6,7 +6,7 @@ import trash from 'trash';
 import { FrontmatterHandler } from './frontmatter.js';
 import { PathFilter } from './pathfilter.js';
 import { generateObsidianUri } from './uri.js';
-import type { ParsedNote, DirectoryListing, NoteWriteParams, DeleteNoteParams, DeleteResult, MoveNoteParams, MoveFileParams, MoveResult, BatchReadParams, BatchReadResult, UpdateFrontmatterParams, NoteInfo, TagManagementParams, TagManagementResult, PatchNoteParams, PatchNoteResult, VaultStats, NoteHeading, ReadNoteLinesParams } from './types.js';
+import type { ParsedNote, DirectoryListing, NoteWriteParams, DeleteNoteParams, DeleteResult, MoveNoteParams, MoveFileParams, MoveResult, BatchReadParams, BatchReadResult, UpdateFrontmatterParams, NoteInfo, TagManagementParams, TagManagementResult, PatchNoteParams, PatchNoteResult, VaultStats, NoteHeading, ReadNoteLinesParams, RingNode, RingWithChildren, VaultGraphState, GraphPos } from './types.js';
 
 /**
  * Map a filesystem write failure to a clear, accurate Error.
@@ -1189,5 +1189,115 @@ export class FileSystemService {
     return Array.from(tagCounts.entries())
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }
+
+  async getRingNodes(): Promise<RingNode[]> {
+    const rings: RingNode[] = [];
+
+    const scanDirectory = async (dirPath: string, relativePath: string = ''): Promise<void> => {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        const fullEntryPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          if (!this.pathFilter.isAllowedForListing(entryRelPath)) continue;
+          await scanDirectory(fullEntryPath, entryRelPath);
+        } else if (entry.isFile() && entry.name.endsWith('.md') && this.pathFilter.isAllowed(entryRelPath)) {
+          try {
+            const content = await readFile(fullEntryPath, 'utf-8');
+            const parsed = this.frontmatterHandler.parse(content);
+            const fm = parsed.frontmatter;
+            const tags: string[] = Array.isArray(fm.tags) ? fm.tags : typeof fm.tags === 'string' ? [fm.tags] : [];
+            if (!tags.includes('ring')) continue;
+            const ringFilter: string = typeof fm['ring-filter'] === 'string' ? fm['ring-filter'].replace(/^#/, '') : '';
+            const radius: number = typeof fm.radius === 'number' ? fm.radius : 150;
+            const nArr: number[] = Array.isArray(fm['ring-normal']) ? fm['ring-normal'] as number[] : [0, 1, 0];
+            const ringNormal: [number, number, number] = [nArr[0] ?? 0, nArr[1] ?? 1, nArr[2] ?? 0];
+            rings.push({ path: entryRelPath, ringFilter, radius, ringNormal });
+          } catch {
+            // skip unreadable files
+          }
+        }
+      }
+    };
+
+    await scanDirectory(this.vaultPath);
+    return rings;
+  }
+
+  async getVaultGraphState(): Promise<VaultGraphState> {
+    // Single-pass: collect all notes with frontmatter (ring nodes + potential children + graph_pos)
+    type NoteRecord = {
+      tags: string[];
+      graphPos: GraphPos | null;
+      ringFilter: string;
+      radius: number;
+      ringNormal: [number, number, number];
+      isRing: boolean;
+    };
+    const noteMap = new Map<string, NoteRecord>();
+
+    const scanDirectory = async (dirPath: string, relativePath: string = ''): Promise<void> => {
+      const entries = await readdir(dirPath, { withFileTypes: true });
+      for (const entry of entries) {
+        const entryRelPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+        const fullEntryPath = join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+          if (!this.pathFilter.isAllowedForListing(entryRelPath)) continue;
+          await scanDirectory(fullEntryPath, entryRelPath);
+        } else if (entry.isFile() && entry.name.endsWith('.md') && this.pathFilter.isAllowed(entryRelPath)) {
+          try {
+            const content = await readFile(fullEntryPath, 'utf-8');
+            const parsed = this.frontmatterHandler.parse(content);
+            const fm = parsed.frontmatter;
+            const tags: string[] = Array.isArray(fm.tags) ? fm.tags : typeof fm.tags === 'string' ? [fm.tags] : [];
+
+            let graphPos: GraphPos | null = null;
+            if (typeof fm.graph_pos === 'string') {
+              const parts = fm.graph_pos.split(',').map(Number);
+              if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+                graphPos = { x: parts[0]!, y: parts[1]!, z: parts[2]! };
+              }
+            }
+
+            const isRing = tags.includes('ring');
+            const ringFilter: string = isRing && typeof fm['ring-filter'] === 'string' ? fm['ring-filter'].replace(/^#/, '') : '';
+            const radius: number = isRing && typeof fm.radius === 'number' ? fm.radius : 150;
+            const nArr: number[] = Array.isArray(fm['ring-normal']) ? fm['ring-normal'] as number[] : [0, 1, 0];
+            const ringNormal: [number, number, number] = [nArr[0] ?? 0, nArr[1] ?? 1, nArr[2] ?? 0];
+
+            noteMap.set(entryRelPath, { tags, graphPos, ringFilter, radius, ringNormal, isRing });
+          } catch {
+            // skip unreadable files
+          }
+        }
+      }
+    };
+
+    await scanDirectory(this.vaultPath);
+
+    const rings: RingWithChildren[] = [];
+    for (const [path, record] of noteMap) {
+      if (!record.isRing) continue;
+      const children: Array<{ path: string; graphPos: GraphPos | null }> = [];
+      if (record.ringFilter) {
+        for (const [childPath, childRecord] of noteMap) {
+          if (childPath === path) continue;
+          if (childRecord.tags.includes(record.ringFilter)) {
+            children.push({ path: childPath, graphPos: childRecord.graphPos });
+          }
+        }
+      }
+      rings.push({
+        path,
+        ringFilter: record.ringFilter,
+        radius: record.radius,
+        ringNormal: record.ringNormal,
+        graphPos: record.graphPos,
+        children
+      });
+    }
+
+    return { rings };
   }
 }

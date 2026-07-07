@@ -138,6 +138,27 @@ export interface ReadNoteLinesParams {
     startLine: number;
     endLine: number;
 }
+export interface RingNode {
+    path: string;
+    ringFilter: string;
+    radius: number;
+    ringNormal: [number, number, number];
+}
+export interface GraphPos {
+    x: number;
+    y: number;
+    z: number;
+}
+export interface RingWithChildren extends RingNode {
+    graphPos: GraphPos | null;
+    children: Array<{
+        path: string;
+        graphPos: GraphPos | null;
+    }>;
+}
+export interface VaultGraphState {
+    rings: RingWithChildren[];
+}
 export interface VaultStats {
     totalNotes: number;
     totalFolders: number;
