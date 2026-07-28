@@ -26,7 +26,7 @@ test("createServer returns a Server instance", () => {
   expect(typeof server.connect).toBe("function");
 });
 
-test("server registers 18 tools", async () => {
+test("server registers 20 tools", async () => {
   const server = createServer(testVaultPath, { version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -38,7 +38,7 @@ test("server registers 18 tools", async () => {
   ]);
 
   const result = await client.listTools();
-  expect(result.tools).toHaveLength(18);
+  expect(result.tools).toHaveLength(20);
 
   const toolNames = result.tools.map((t) => t.name).sort();
   expect(toolNames).toEqual([
@@ -46,6 +46,8 @@ test("server registers 18 tools", async () => {
     "get_frontmatter",
     "get_note_outline",
     "get_notes_info",
+    "get_ring_nodes",
+    "get_vault_graph_state",
     "get_vault_stats",
     "list_all_tags",
     "list_directory",
